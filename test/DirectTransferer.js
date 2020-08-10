@@ -3,14 +3,14 @@ import { Constants } from './utils'
 
 const MockAmp = artifacts.require('MockAmp')
 const FlexaCollateralManager = artifacts.require('FlexaCollateralManager')
-const { ZERO_ADDRESS, EVENT_PARTITION_MANAGER_UPDATE } = Constants
+const { ZERO_ADDRESS, EVENT_DIRECT_TRANSFERER_UPDATE } = Constants
 
 contract('FlexaCollateralManager', function ([
     owner,
-    partitionManager,
+    directTransferer,
     unknown,
 ]) {
-    describe('Partition Manager', () => {
+    describe('DirectTransferer', () => {
         beforeEach(async function () {
             this.amp = await MockAmp.deployed()
             this.collateralManager = await FlexaCollateralManager.new(
@@ -19,40 +19,40 @@ contract('FlexaCollateralManager', function ([
             )
         })
 
-        it('sets the initial partition manager to the zero address', async function () {
-            const currentManager = await this.collateralManager.partitionManager()
+        it('sets the initial direct transferer to the zero address', async function () {
+            const currentPublisher = await this.collateralManager.directTransferer()
 
-            assert.equal(currentManager, ZERO_ADDRESS)
+            assert.equal(currentPublisher, ZERO_ADDRESS)
         })
 
-        describe('when owner sets the partition manager', () => {
+        describe('when owner sets the direct transferer', () => {
             beforeEach(async function () {
-                await this.collateralManager.setPartitionManager(
-                    partitionManager,
+                await this.collateralManager.setDirectTransferer(
+                    directTransferer,
                     { from: owner }
                 )
             })
 
-            it('sets the partition manager', async function () {
-                const currentManager = await this.collateralManager.partitionManager()
+            it('sets the direct transferer publisher', async function () {
+                const currentPublisher = await this.collateralManager.directTransferer()
 
-                assert.equal(currentManager, partitionManager)
+                assert.equal(currentPublisher, directTransferer)
             })
 
             it('emits an event', async function () {
                 const logs = await this.collateralManager.getPastEvents()
-                const event = logs[0];
+                const event = logs[0]
 
-                assert.equal(event.event, EVENT_PARTITION_MANAGER_UPDATE)
+                assert.equal(event.event, EVENT_DIRECT_TRANSFERER_UPDATE)
                 assert.equal(event.args.oldValue, ZERO_ADDRESS)
-                assert.equal(event.args.newValue, partitionManager)
+                assert.equal(event.args.newValue, directTransferer)
             })
         })
 
-        describe('when non-owner sets the partition manager', () => {
+        describe('when non-owner sets the direct transferer', () => {
             it('reverts', async function () {
                 await shouldFail.reverting(
-                    this.collateralManager.setPartitionManager(
+                    this.collateralManager.setDirectTransferer(
                         unknown,
                         { from: unknown }
                     )

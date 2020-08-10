@@ -1,8 +1,9 @@
 import { shouldFail } from 'openzeppelin-test-helpers'
 import { padRight, toHex } from 'web3-utils'
-import { Constants, Helpers } from './utils'
+import { Constants, Helpers } from '../utils'
 
-const MockAmp = artifacts.require('MockAmp')
+const MockFXC = artifacts.require('MockFXC')
+const Amp = artifacts.require('Amp')
 const FlexaCollateralManager = artifacts.require('FlexaCollateralManager')
 const {
     ZERO_ADDRESS,
@@ -13,13 +14,23 @@ const {
 const { concatHexData, formatCollateralPartition } = Helpers
 
 contract('FlexaCollateralManager', function ([
+    fxcOwner,
+    ampOwner,
     owner,
     partitionManager,
     unknown,
 ]) {
-    describe('Permitted Partitions', () => {
+    describe('Integration - Permitted Partitions', () => {
         beforeEach(async function () {
-            this.amp = await MockAmp.deployed()
+            this.fxc = await MockFXC.new(
+                { from: fxcOwner }
+            )
+            this.amp = await Amp.new(
+                this.fxc.address,
+                '',
+                '',
+                { from: ampOwner }
+            )
             this.collateralManager = await FlexaCollateralManager.new(
                 this.amp.address,
                 { from: owner }

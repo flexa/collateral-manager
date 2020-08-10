@@ -16,13 +16,16 @@ module.exports = {
 
   compilers: {
     solc: {
-      version: "0.6.9",
+      version: "0.6.10",
       docker: false,
       settings: {
         optimizer: {
           enabled: false
         },
-        evmVersion: "istanbul"
+        evmVersion: "istanbul",
+        debug: {
+          revertStrings: "strip"
+        }
       }
     }
   }

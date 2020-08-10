@@ -1,3 +1,4 @@
+import { shouldFail } from 'openzeppelin-test-helpers'
 import { Constants, Helpers } from './utils'
 
 const MockAmp = artifacts.require('MockAmp')
@@ -13,7 +14,6 @@ const {
     EVENT_WITHDRAWAL
 } = Constants
 const {
-    assertRevertErrMsg,
     buildTree,
     generateLeaves,
     generateOperatorData,
@@ -129,7 +129,7 @@ contract('FlexaCollateralManager', function ([
 
                 describe('when the supplier reuses valid withdrawal data', () => {
                     it('reverts', async function () {
-                        await assertRevertErrMsg(
+                        await shouldFail.reverting(
                             this.amp.tokensToTransfer(
                                 ZERO_BYTES4, // _functionSig
                                 ALT_PARTITION_1, // _partition
@@ -140,8 +140,7 @@ contract('FlexaCollateralManager', function ([
                                 SWITCH_TO_DEFAULT_PARTITION, // data
                                 this.operatorData, // _operatorData
                                 { from: supplier }
-                            ),
-                            'Transfer unauthorized'
+                            )
                         )
                     })
                 })
@@ -185,7 +184,7 @@ contract('FlexaCollateralManager', function ([
 
                     describe('when the supplier attempts to use the same authorization on second root', () => {
                         it('reverts', async function () {
-                            await assertRevertErrMsg(
+                            await shouldFail.reverting(
                                 this.amp.tokensToTransfer(
                                     ZERO_BYTES4, // _functionSig
                                     ALT_PARTITION_1, // _partition
@@ -196,8 +195,7 @@ contract('FlexaCollateralManager', function ([
                                     SWITCH_TO_DEFAULT_PARTITION, // data
                                     this.operatorData, // _operatorData
                                     { from: supplier }
-                                ),
-                                'Transfer unauthorized'
+                                )
                             )
                         })
                     })
@@ -238,7 +236,7 @@ contract('FlexaCollateralManager', function ([
 
             describe('when an unauthorized user withdraws', () => {
                 it('reverts', async function () {
-                    await assertRevertErrMsg(
+                    await shouldFail.reverting(
                         this.amp.tokensToTransfer(
                             ZERO_BYTES4, // _functionSig
                             ALT_PARTITION_1, // _partition
@@ -249,15 +247,14 @@ contract('FlexaCollateralManager', function ([
                             SWITCH_TO_DEFAULT_PARTITION, // data
                             this.operatorData, // _operatorData
                             { from: unknown }
-                        ),
-                        'Transfer unauthorized'
+                        )
                     )
                 })
             })
 
             describe('when the supplier provides an incorrect value', () => {
                 it('reverts', async function () {
-                    await assertRevertErrMsg(
+                    await shouldFail.reverting(
                         this.amp.tokensToTransfer(
                             ZERO_BYTES4, // _functionSig
                             ALT_PARTITION_1, // _partition
@@ -268,8 +265,7 @@ contract('FlexaCollateralManager', function ([
                             SWITCH_TO_DEFAULT_PARTITION, // data
                             this.operatorData, // _operatorData
                             { from: supplier }
-                        ),
-                        'Transfer unauthorized'
+                        )
                     )
                 })
             })
@@ -285,7 +281,7 @@ contract('FlexaCollateralManager', function ([
                 })
 
                 it('reverts', async function () {
-                    await assertRevertErrMsg(
+                    await shouldFail.reverting(
                         this.amp.tokensToTransfer(
                             ZERO_BYTES4, // _functionSig
                             ALT_PARTITION_1, // _partition
@@ -296,8 +292,7 @@ contract('FlexaCollateralManager', function ([
                             SWITCH_TO_DEFAULT_PARTITION, // data
                             this.operatorData, // _operatorData
                             { from: supplier }
-                        ),
-                        'Transfer unauthorized'
+                        )
                     )
                 })
             })
@@ -333,7 +328,7 @@ contract('FlexaCollateralManager', function ([
                 })
 
                 it('reverts', async function () {
-                    await assertRevertErrMsg(
+                    await shouldFail.reverting(
                         this.amp.tokensToTransfer(
                             ZERO_BYTES4, // _functionSig
                             ALT_PARTITION_1, // _partition
@@ -344,15 +339,14 @@ contract('FlexaCollateralManager', function ([
                             SWITCH_TO_DEFAULT_PARTITION, // data
                             this.operatorData, // _operatorData
                             { from: supplier }
-                        ),
-                        'Transfer unauthorized'
+                        )
                     )
                 })
             })
 
             describe('when the supplier provides an incorrect partition', () => {
                 it('reverts', async function () {
-                    await assertRevertErrMsg(
+                    await shouldFail.reverting(
                         this.amp.tokensToTransfer(
                             ZERO_BYTES4, // _functionSig
                             DEFAULT_PARTITION, // _partition
@@ -363,8 +357,7 @@ contract('FlexaCollateralManager', function ([
                             SWITCH_TO_DEFAULT_PARTITION, // data
                             this.operatorData, // _operatorData
                             { from: supplier }
-                        ),
-                        'Transfer unauthorized'
+                        )
                     )
                 })
             })
@@ -381,7 +374,7 @@ contract('FlexaCollateralManager', function ([
                 })
 
                 it('reverts', async function () {
-                    await assertRevertErrMsg(
+                    await shouldFail.reverting(
                         this.amp.tokensToTransfer(
                             ZERO_BYTES4, // _functionSig
                             ALT_PARTITION_1, // _partition
@@ -392,86 +385,9 @@ contract('FlexaCollateralManager', function ([
                             SWITCH_TO_DEFAULT_PARTITION, // data
                             this.operatorData, // _operatorData
                             { from: supplier }
-                        ),
-                        'Transfer unauthorized'
-                    )
-                })
-            })
-
-            describe('when the supplier renounces the withdrawal', () => {
-                beforeEach(async function () {
-                    await this.collateralManager.renounceWithdrawalAuthorization(
-                        supplier,
-                        ALT_PARTITION_1,
-                        { from: supplier }
-                    )
-                })
-
-                it('updates the suppliers nonce', async function () {
-                    const supplierNonce =
-                        await this.collateralManager.addressToWithdrawalNonce(
-                            ALT_PARTITION_1,
-                            supplier
                         )
-
-                    assert.equal(supplierNonce, rootNonce1)
-                })
-
-                it('emits an event', async function () {
-                    const logs = await this.collateralManager.getPastEvents()
-                    const event = logs[0]
-
-                    assert.equal(event.event, EVENT_RENOUNCE_WITHDRAWAL_AUTHORIZATION)
-                    assert.equal(event.args.supplier, supplier)
-                    assert.equal(event.args.partition, ALT_PARTITION_1)
-                    assert.equal(event.args.nonce, rootNonce1)
-                })
-            })
-
-            describe('when the owner renounces the withdrawal', () => {
-                it('is allowed', async function () {
-                    await this.collateralManager.renounceWithdrawalAuthorization(
-                        supplier,
-                        ALT_PARTITION_1,
-                        { from: owner }
                     )
                 })
-            })
-
-            describe('when the withdrawal publisher renounces the withdrawal', () => {
-                it('is allowed', async function () {
-                    await this.collateralManager.renounceWithdrawalAuthorization(
-                        supplier,
-                        ALT_PARTITION_1,
-                        { from: withdrawalPublisher }
-                    )
-                })
-            })
-
-            describe('when an unauthorized user renounces the withdrawal', () => {
-                it('reverts', async function () {
-                    await assertRevertErrMsg(
-                        this.collateralManager.renounceWithdrawalAuthorization(
-                            supplier,
-                            ALT_PARTITION_1,
-                            { from: unknown }
-                        ),
-                        'Invalid sender'
-                    )
-                })
-            })
-        })
-
-        describe('when the supplier renounces while nonce matches max withdrawal nonce', () => {
-            it('reverts', async function () {
-                await assertRevertErrMsg(
-                    this.collateralManager.renounceWithdrawalAuthorization(
-                        supplier,
-                        ALT_PARTITION_1,
-                        { from: supplier }
-                    ),
-                    'Authorization expired'
-                )
             })
         })
     })

@@ -1,20 +1,22 @@
 import { shouldFail } from 'openzeppelin-test-helpers'
-import { Constants, Helpers } from './utils'
+import { Constants, Helpers } from '../utils'
 
-const MockAmp = artifacts.require('MockAmp')
+const MockFXC = artifacts.require('MockFXC')
+const Amp = artifacts.require('Amp')
 const FlexaCollateralManager = artifacts.require('FlexaCollateralManager')
+const CollateralPoolPartitionValidator = artifacts.require('CollateralPoolPartitionValidator')
 const {
     ZERO_BYTE,
-    ZERO_BYTES4,
     ZERO_BYTES32,
     FLAG_CHANGE_PARTITION,
     DEFAULT_PARTITION,
-    EVENT_FALLBACK_ROOT_HASH_SET
+    EVENT_FALLBACK_ROOT_HASH_SET,
+    PREFIX_COLLATERAL_POOL
 } = Constants
 const {
     concatHexData,
     formatCollateralPartition,
-    moveTimeForwardSeconds,
+    moveTimeForwardSeconds
 } = Helpers
 
 const merkleRoot =
@@ -23,7 +25,9 @@ const supplyNonce0 = 0
 const supplyNonce1 = 1
 const supplyAmount = 500
 
-contract('FlexaCollateralManager', function ([
+contract('Integration - FlexaCollateralManager', function ([
+    fxcOwner,
+    ampOwner,
     owner,
     fallbackPublisher,
     supplier,
@@ -31,7 +35,26 @@ contract('FlexaCollateralManager', function ([
 ]) {
     describe('Fallback Roots', () => {
         beforeEach(async function () {
-            this.amp = await MockAmp.deployed()
+            this.fxc = await MockFXC.new(
+                { from: fxcOwner }
+            )
+            this.amp = await Amp.new(
+                this.fxc.address,
+                '',
+                '',
+                { from: ampOwner }
+            )
+            this.validator = await CollateralPoolPartitionValidator.new(
+                this.amp.address,
+                { from: ampOwner }
+            )
+
+            await this.amp.setPartitionStrategy(
+                PREFIX_COLLATERAL_POOL,
+                this.validator.address,
+                { from: ampOwner }
+            )
+
             this.collateralManager = await FlexaCollateralManager.new(
                 this.amp.address,
                 { from: owner }
@@ -54,6 +77,21 @@ contract('FlexaCollateralManager', function ([
                 this.partitionA,
                 { from: owner }
             )
+
+            await this.fxc.mint(
+                supplier,
+                supplyAmount,
+                { from: fxcOwner }
+            )
+            await this.fxc.approve(
+                this.amp.address,
+                supplyAmount,
+                { from: supplier }
+            )
+            await this.amp.swap(
+                supplier,
+                { from: supplier }
+            )
         })
 
         it('sets a default fallback root of zero', async function () {
@@ -70,15 +108,13 @@ contract('FlexaCollateralManager', function ([
 
         describe('when a supply has been made', () => {
             beforeEach(async function () {
-                await this.amp.tokensReceived(
-                    ZERO_BYTES4,
-                    DEFAULT_PARTITION,
-                    supplier,
-                    supplier,
-                    this.collateralManager.address,
-                    supplyAmount,
-                    this.switchToPartitionA,
-                    ZERO_BYTE,
+                await this.amp.transferByPartition(
+                    DEFAULT_PARTITION, // _partition,
+                    supplier, // _from,
+                    this.collateralManager.address, // _to,
+                    supplyAmount, // _value,
+                    this.switchToPartitionA, // calldata _data,
+                    ZERO_BYTE, // calldata _operatorData
                     { from: supplier }
                 )
             })

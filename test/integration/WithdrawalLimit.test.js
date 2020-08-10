@@ -1,7 +1,8 @@
 import { shouldFail } from 'openzeppelin-test-helpers'
-import { Constants } from './utils'
+import { Constants, Helpers } from '../utils'
 
-const MockAmp = artifacts.require('MockAmp')
+const MockFXC = artifacts.require('MockFXC')
+const Amp = artifacts.require('Amp')
 const FlexaCollateralManager = artifacts.require('FlexaCollateralManager')
 const { BN } = web3.utils
 const { EVENT_WITHDRAWAL_LIMIT_UPDATE } = Constants
@@ -10,14 +11,24 @@ const limitIncrease = 10
 const limitDecrease = -10
 const initialLimit = new BN(10).pow(new BN(23))
 
-contract('FlexaCollateralManager', function ([
+contract('Integration - FlexaCollateralManager', function ([
+  fxcOwner,
+  ampOwner,
   owner,
   withdrawalLimitPublisher,
   unknown,
 ]) {
   describe('Withdrawal Limit', () => {
     beforeEach(async function () {
-      this.amp = await MockAmp.deployed()
+      this.fxc = await MockFXC.new(
+        { from: fxcOwner }
+      )
+      this.amp = await Amp.new(
+        this.fxc.address,
+        '',
+        '',
+        { from: ampOwner }
+      )
       this.collateralManager = await FlexaCollateralManager.new(
         this.amp.address,
         { from: owner }

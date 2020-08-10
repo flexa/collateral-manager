@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity 0.6.9;
+pragma solidity 0.6.10;
 
-import "./IAmp.sol";
-import "./IAmpTokensRecipient.sol";
-import "./IAmpTokensSender.sol";
-
+import "../IAmp.sol";
+import "../amp/extensions/IAmpTokensRecipient.sol";
+import "../amp/extensions/IAmpTokensSender.sol";
 
 contract MockAmp is IAmp, IAmpTokensRecipient, IAmpTokensSender {
     function registerCollateralManager() external override {}

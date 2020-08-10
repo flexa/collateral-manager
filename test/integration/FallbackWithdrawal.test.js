@@ -1,28 +1,36 @@
 import { shouldFail } from 'openzeppelin-test-helpers'
-import { Constants, Helpers } from './utils'
+import { Constants, Helpers } from '../utils'
 
-const MockAmp = artifacts.require('MockAmp')
+const MockFXC = artifacts.require('MockFXC')
+const Amp = artifacts.require('Amp')
 const FlexaCollateralManager = artifacts.require('FlexaCollateralManager')
+const CollateralPoolPartitionValidator = artifacts.require('CollateralPoolPartitionValidator')
 const {
-    ZERO_BYTES4,
+    ZERO_BYTE,
     FLAG_WITHDRAWAL_FALLBACK,
+    FLAG_CHANGE_PARTITION,
     DEFAULT_PARTITION,
-    ALT_PARTITION_1,
     SWITCH_TO_DEFAULT_PARTITION,
-    EVENT_FALLBACK_WITHDRAWAL
+    PREFIX_COLLATERAL_POOL,
+    EVENT_FALLBACK_WITHDRAWAL,
 } = Constants
 const {
     buildTree,
+    concatHexData,
+    formatCollateralPartition,
     generateFallbackLeaves,
     generateFallbackOperatorData,
-    moveTimeForwardSeconds,
+    moveTimeForwardSeconds
 } = Helpers
 
+const supplyAmount = 10000
 const withdrawAmount = 100
 const maxCumulativeWithdrawalAmount = 200
 const withdrawalRootNonce = 1
 
-contract('FlexaCollateralManager', function ([
+contract('Integration - FlexaCollateralManager', function ([
+    fxcOwner,
+    ampOwner,
     owner,
     fallbackPublisher,
     supplier,
@@ -30,7 +38,26 @@ contract('FlexaCollateralManager', function ([
 ]) {
     describe('Fallback Withdrawals', function () {
         beforeEach(async function () {
-            this.amp = await MockAmp.deployed()
+            this.fxc = await MockFXC.new(
+                { from: fxcOwner }
+            )
+            this.amp = await Amp.new(
+                this.fxc.address,
+                '',
+                '',
+                { from: ampOwner }
+            )
+            this.validator = await CollateralPoolPartitionValidator.new(
+                this.amp.address,
+                { from: ampOwner }
+            )
+
+            await this.amp.setPartitionStrategy(
+                PREFIX_COLLATERAL_POOL,
+                this.validator.address,
+                { from: ampOwner }
+            )
+
             this.collateralManager = await FlexaCollateralManager.new(
                 this.amp.address,
                 { from: owner }
@@ -39,6 +66,68 @@ contract('FlexaCollateralManager', function ([
                 fallbackPublisher,
                 { from: owner }
             )
+
+            this.partitionA = formatCollateralPartition(
+                this.collateralManager.address,
+                'A',
+            )
+            this.switchToPartitionA = concatHexData(
+                FLAG_CHANGE_PARTITION,
+                this.partitionA
+            )
+            this.partitionB = formatCollateralPartition(
+                this.collateralManager.address,
+                'B',
+            )
+            this.switchToPartitionB = concatHexData(
+                FLAG_CHANGE_PARTITION,
+                this.partitionB
+            )
+
+            await this.collateralManager.addPartition(
+                this.partitionA,
+                { from: owner }
+            )
+            await this.collateralManager.addPartition(
+                this.partitionB,
+                { from: owner }
+            )
+
+            await this.fxc.mint(
+                supplier,
+                supplyAmount,
+                { from: fxcOwner }
+            )
+            await this.fxc.approve(
+                this.amp.address,
+                supplyAmount,
+                { from: supplier }
+            )
+            await this.amp.swap(
+                supplier,
+                { from: supplier }
+            )
+
+            await this.amp.transferByPartition(
+                DEFAULT_PARTITION, // _partition,
+                supplier, // _from,
+                this.collateralManager.address, // _to,
+                supplyAmount / 2, // _value,
+                this.switchToPartitionA, // calldata _data,
+                ZERO_BYTE, // calldata _operatorData
+                { from: supplier }
+            )
+
+            await this.amp.transferByPartition(
+                DEFAULT_PARTITION, // _partition,
+                supplier, // _from,
+                this.collateralManager.address, // _to,
+                supplyAmount / 2, // _value,
+                this.switchToPartitionB, // calldata _data,
+                ZERO_BYTE, // calldata _operatorData
+                { from: supplier }
+            )
+
             await this.collateralManager.addWithdrawalRoot(
                 '0xb152eca4364850f3424c7ac2b337d606c5ca0a3f96f1554f8db33d2f6f130bbe',
                 withdrawalRootNonce,
@@ -52,7 +141,7 @@ contract('FlexaCollateralManager', function ([
                 const leafData = [
                     {
                         to: supplier,
-                        partition: ALT_PARTITION_1,
+                        partition: this.partitionA,
                         value: maxCumulativeWithdrawalAmount,
                     },
                     // Random leaf
@@ -93,15 +182,13 @@ contract('FlexaCollateralManager', function ([
 
                 describe('when the supplier withdraws half of the authorized amount', () => {
                     beforeEach(async function () {
-                        await this.amp.tokensToTransfer(
-                            ZERO_BYTES4, // _functionSig
-                            ALT_PARTITION_1, // _partition
-                            supplier, // _operator
-                            this.collateralManager.address, // _from
-                            supplier, // to
-                            withdrawAmount, // _value
-                            SWITCH_TO_DEFAULT_PARTITION, // data
-                            this.operatorData, // _operatorData
+                        await this.amp.transferByPartition(
+                            this.partitionA, // _partition,
+                            this.collateralManager.address, // _from,
+                            supplier, // _to,
+                            withdrawAmount, // _value,
+                            SWITCH_TO_DEFAULT_PARTITION, // calldata _data,
+                            this.operatorData, // calldata _operatorData
                             { from: supplier }
                         )
                     })
@@ -112,14 +199,14 @@ contract('FlexaCollateralManager', function ([
 
                         assert.equal(event.event, EVENT_FALLBACK_WITHDRAWAL)
                         assert.equal(event.args.supplier, supplier)
-                        assert.equal(event.args.partition, ALT_PARTITION_1)
+                        assert.equal(event.args.partition, this.partitionA)
                         assert.equal(event.args.amount, withdrawAmount)
                     })
 
                     it('updates the cumulative amount withdrawn', async function () {
                         const cumulativeAmountWithdrawn =
                             await this.collateralManager.addressToCumulativeAmountWithdrawn(
-                                ALT_PARTITION_1,
+                                this.partitionA,
                                 supplier
                             )
 
@@ -129,7 +216,7 @@ contract('FlexaCollateralManager', function ([
                     it('invalidates withdrawals', async function () {
                         const supplierWithdrawalNonce = await this.collateralManager.
                             addressToWithdrawalNonce(
-                                ALT_PARTITION_1,
+                                this.partitionA,
                                 supplier
                             )
 
@@ -138,15 +225,13 @@ contract('FlexaCollateralManager', function ([
 
                     describe('when the supplier withdraws the second half of the authorized amount', () => {
                         beforeEach(async function () {
-                            await this.amp.tokensToTransfer(
-                                ZERO_BYTES4, // _functionSig
-                                ALT_PARTITION_1, // _partition
-                                supplier, // _operator
-                                this.collateralManager.address, // _from
-                                supplier, // to
-                                withdrawAmount, // _value
-                                SWITCH_TO_DEFAULT_PARTITION, // data
-                                this.operatorData, // _operatorData
+                            await this.amp.transferByPartition(
+                                this.partitionA, // _partition,
+                                this.collateralManager.address, // _from,
+                                supplier, // _to,
+                                withdrawAmount, // _value,
+                                SWITCH_TO_DEFAULT_PARTITION, // calldata _data,
+                                this.operatorData, // calldata _operatorData
                                 { from: supplier }
                             )
                         })
@@ -157,14 +242,14 @@ contract('FlexaCollateralManager', function ([
 
                             assert.equal(event.event, EVENT_FALLBACK_WITHDRAWAL)
                             assert.equal(event.args.supplier, supplier)
-                            assert.equal(event.args.partition, ALT_PARTITION_1)
+                            assert.equal(event.args.partition, this.partitionA)
                             assert.equal(event.args.amount, withdrawAmount)
                         })
 
                         it('updates the cumulative amount withdrawn', async function () {
                             const cumulativeAmountWithdrawn =
                                 await this.collateralManager.addressToCumulativeAmountWithdrawn(
-                                    ALT_PARTITION_1,
+                                    this.partitionA,
                                     supplier
                                 )
 
@@ -174,15 +259,13 @@ contract('FlexaCollateralManager', function ([
                         describe('when the supplier exceeds max allowed fallback withdrawal', () => {
                             it('reverts', async function () {
                                 await shouldFail.reverting(
-                                    this.amp.tokensToTransfer(
-                                        ZERO_BYTES4, // _functionSig
-                                        ALT_PARTITION_1, // _partition
-                                        supplier, // _operator
-                                        this.collateralManager.address, // _from
-                                        supplier, // to
-                                        withdrawAmount, // _value
-                                        SWITCH_TO_DEFAULT_PARTITION, // data
-                                        this.operatorData, // _operatorData
+                                    this.amp.transferByPartition(
+                                        this.partitionA, // _partition,
+                                        this.collateralManager.address, // _from,
+                                        supplier, // _to,
+                                        withdrawAmount, // _value,
+                                        SWITCH_TO_DEFAULT_PARTITION, // calldata _data,
+                                        this.operatorData, // calldata _operatorData
                                         { from: supplier }
                                     )
                                 )
@@ -192,33 +275,39 @@ contract('FlexaCollateralManager', function ([
                 })
 
                 describe('when the owner withdraws', () => {
-                    it('is allowed', async function () {
-                        await this.amp.tokensToTransfer(
-                            ZERO_BYTES4, // _functionSig
-                            ALT_PARTITION_1, // _partition
-                            owner, // _operator
-                            this.collateralManager.address, // _from
-                            owner, // to
-                            withdrawAmount, // _value
-                            SWITCH_TO_DEFAULT_PARTITION, // data
-                            this.operatorData, // _operatorData
+                    beforeEach(async function () {
+                        await this.amp.transferByPartition(
+                            this.partitionA, // _partition,
+                            this.collateralManager.address, // _from,
+                            owner, // _to,
+                            withdrawAmount, // _value,
+                            SWITCH_TO_DEFAULT_PARTITION, // calldata _data,
+                            this.operatorData, // calldata _operatorData
                             { from: owner }
                         )
+                    })
+
+                    it('records the supplier as the withdrawer in the event', async function () {
+                        const logs = await this.collateralManager.getPastEvents()
+                        const event = logs[0]
+
+                        assert.equal(event.event, EVENT_FALLBACK_WITHDRAWAL)
+                        assert.equal(event.args.supplier, supplier)
+                        assert.equal(event.args.partition, this.partitionA)
+                        assert.equal(event.args.amount, withdrawAmount)
                     })
                 })
 
                 describe('when the fallback publisher executes the fallback withdrawal', () => {
                     it('reverts', async function () {
                         await shouldFail.reverting(
-                            this.amp.tokensToTransfer(
-                                ZERO_BYTES4, // _functionSig
-                                ALT_PARTITION_1, // _partition
-                                fallbackPublisher, // _operator
-                                this.collateralManager.address, // _from
-                                fallbackPublisher, // to
-                                withdrawAmount, // _value
-                                SWITCH_TO_DEFAULT_PARTITION, // data
-                                this.operatorData, // _operatorData
+                            this.amp.transferByPartition(
+                                this.partitionA, // _partition,
+                                this.collateralManager.address, // _from,
+                                fallbackPublisher, // _to,
+                                withdrawAmount, // _value,
+                                SWITCH_TO_DEFAULT_PARTITION, // calldata _data,
+                                this.operatorData, // calldata _operatorData
                                 { from: fallbackPublisher }
                             )
                         )
@@ -228,15 +317,13 @@ contract('FlexaCollateralManager', function ([
                 describe('when an unauthorized user executes the fallback withdrawal', () => {
                     it('reverts', async function () {
                         await shouldFail.reverting(
-                            this.amp.tokensToTransfer(
-                                ZERO_BYTES4, // _functionSig
-                                ALT_PARTITION_1, // _partition
-                                unknown, // _operator
-                                this.collateralManager.address, // _from
-                                unknown, // to
-                                withdrawAmount, // _value
-                                SWITCH_TO_DEFAULT_PARTITION, // data
-                                this.operatorData, // _operatorData
+                            this.amp.transferByPartition(
+                                this.partitionA, // _partition,
+                                this.collateralManager.address, // _from,
+                                unknown, // _to,
+                                withdrawAmount, // _value,
+                                SWITCH_TO_DEFAULT_PARTITION, // calldata _data,
+                                this.operatorData, // calldata _operatorData
                                 { from: unknown }
                             )
                         )
@@ -249,7 +336,7 @@ contract('FlexaCollateralManager', function ([
                         const leafData = [
                             {
                                 to: supplier,
-                                partition: ALT_PARTITION_1,
+                                partition: this.partitionA,
                                 value: withdrawAmount,
                             },
                             // Random leaf
@@ -274,15 +361,13 @@ contract('FlexaCollateralManager', function ([
 
                     it('reverts', async function () {
                         await shouldFail.reverting(
-                            this.amp.tokensToTransfer(
-                                ZERO_BYTES4, // _functionSig
-                                ALT_PARTITION_1, // _partition
-                                supplier, // _operator
-                                this.collateralManager.address, // _from
-                                supplier, // to
-                                withdrawAmount, // _value
-                                SWITCH_TO_DEFAULT_PARTITION, // data
-                                this.operatorData, // _operatorData
+                            this.amp.transferByPartition(
+                                this.partitionA, // _partition,
+                                this.collateralManager.address, // _from,
+                                supplier, // _to,
+                                withdrawAmount, // _value,
+                                SWITCH_TO_DEFAULT_PARTITION, // calldata _data,
+                                this.operatorData, // calldata _operatorData
                                 { from: supplier }
                             )
                         )
@@ -292,15 +377,13 @@ contract('FlexaCollateralManager', function ([
                 describe('when the supplier provides an incorrect partition', () => {
                     it('reverts', async function () {
                         await shouldFail.reverting(
-                            this.amp.tokensToTransfer(
-                                ZERO_BYTES4, // _functionSig
-                                DEFAULT_PARTITION, // _partition
-                                supplier, // _operator
-                                this.collateralManager.address, // _from
-                                supplier, // to
-                                withdrawAmount, // _value
-                                SWITCH_TO_DEFAULT_PARTITION, // data
-                                this.operatorData, // _operatorData
+                            this.amp.transferByPartition(
+                                this.partitionB, // _partition,
+                                this.collateralManager.address, // _from,
+                                supplier, // _to,
+                                withdrawAmount, // _value,
+                                SWITCH_TO_DEFAULT_PARTITION, // calldata _data,
+                                this.operatorData, // calldata _operatorData
                                 { from: supplier }
                             )
                         )
@@ -312,7 +395,7 @@ contract('FlexaCollateralManager', function ([
                         const leafData = [
                             {
                                 to: supplier,
-                                partition: ALT_PARTITION_1,
+                                partition: this.partitionA,
                                 value: maxCumulativeWithdrawalAmount,
                             },
                             // Random leaf
@@ -337,15 +420,13 @@ contract('FlexaCollateralManager', function ([
 
                     it('reverts', async function () {
                         await shouldFail.reverting(
-                            this.amp.tokensToTransfer(
-                                ZERO_BYTES4, // _functionSig
-                                ALT_PARTITION_1, // _partition
-                                supplier, // _operator
-                                this.collateralManager.address, // _from
-                                supplier, // to
-                                withdrawAmount, // _value
-                                SWITCH_TO_DEFAULT_PARTITION, // data
-                                this.operatorData, // _operatorData
+                            this.amp.transferByPartition(
+                                this.partitionA, // _partition,
+                                this.collateralManager.address, // _from,
+                                supplier, // _to,
+                                withdrawAmount, // _value,
+                                SWITCH_TO_DEFAULT_PARTITION, // calldata _data,
+                                this.operatorData, // calldata _operatorData
                                 { from: supplier }
                             )
                         )

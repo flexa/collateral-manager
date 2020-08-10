@@ -1,7 +1,8 @@
 import { shouldFail } from 'openzeppelin-test-helpers'
-import { Constants } from './utils'
+import { Constants } from '../utils'
 
-const MockAmp = artifacts.require('MockAmp')
+const MockFXC = artifacts.require('MockFXC')
+const Amp = artifacts.require('Amp')
 const FlexaCollateralManager = artifacts.require('FlexaCollateralManager')
 const {
   ZERO_BYTES32,
@@ -19,14 +20,24 @@ const rootNonce1 = 1
 const rootNonce2 = 2
 const rootNonce3 = 3
 
-contract('FlexaCollateralManager', function ([
+contract('Integration - FlexaCollateralManager', function ([
+  fxcOwner,
+  ampOwner,
   owner,
   withdrawalPublisher,
   unknown
 ]) {
   describe('Withdrawal Roots', () => {
     beforeEach(async function () {
-      this.amp = await MockAmp.deployed()
+      this.fxc = await MockFXC.new(
+        { from: fxcOwner }
+      )
+      this.amp = await Amp.new(
+        this.fxc.address,
+        '',
+        '',
+        { from: ampOwner }
+      )
       this.collateralManager = await FlexaCollateralManager.new(
         this.amp.address,
         { from: owner }

@@ -1,19 +1,30 @@
 import { shouldFail } from 'openzeppelin-test-helpers'
-import { Constants } from './utils'
+import { Constants } from '../utils'
 
-const MockAmp = artifacts.require('MockAmp')
+const MockFXC = artifacts.require('MockFXC')
+const Amp = artifacts.require('Amp')
 const FlexaCollateralManager = artifacts.require('FlexaCollateralManager')
 const { BN } = web3.utils
 const { EVENT_FALLBACK_MECHANISM_DATE_RESET } = Constants
 
 contract('FlexaCollateralManager', function ([
+    fxcOwner,
+    ampOwner,
     owner,
     fallbackPublisher,
     unknown
 ]) {
-    describe('Fallback Date Reset', function () {
+    describe('Integration - Fallback Date Reset', function () {
         beforeEach(async function () {
-            this.amp = await MockAmp.deployed()
+            this.fxc = await MockFXC.new(
+                { from: fxcOwner }
+            )
+            this.amp = await Amp.new(
+                this.fxc.address,
+                '',
+                '',
+                { from: ampOwner }
+            )
             this.collateralManager = await FlexaCollateralManager.new(
                 this.amp.address,
                 { from: owner }

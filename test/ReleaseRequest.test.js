@@ -2,9 +2,13 @@ import { Constants } from './utils'
 
 const MockAmp = artifacts.require('MockAmp')
 const FlexaCollateralManager = artifacts.require('FlexaCollateralManager')
-const { ALT_PARTITION_1, EVENT_RELEASE_REQUEST } = Constants
+const { ALT_PARTITION_1, ALT_PARTITION_2, EVENT_RELEASE_REQUEST } = Constants
 
 const requestAmount = 500
+const data = web3.eth.abi.encodeParameters(
+    ['bytes32', 'uint256'],
+    [ALT_PARTITION_2, requestAmount],
+);
 
 contract('FlexaCollateralManager', function ([
     owner,
@@ -24,6 +28,7 @@ contract('FlexaCollateralManager', function ([
                 await this.collateralManager.requestRelease(
                     ALT_PARTITION_1,
                     requestAmount,
+                    data,
                     { from: supplier }
                 )
             })
@@ -36,6 +41,7 @@ contract('FlexaCollateralManager', function ([
                 assert.equal(event.args.supplier, supplier)
                 assert.equal(event.args.partition, ALT_PARTITION_1)
                 assert.equal(event.args.amount.toNumber(), requestAmount)
+                assert.equal(event.args.data, data)
             })
         })
     })

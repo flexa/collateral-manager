@@ -1,3 +1,4 @@
+import { shouldFail } from 'openzeppelin-test-helpers'
 import { Constants, Helpers } from './utils'
 
 const MockAmp = artifacts.require('MockAmp')
@@ -10,7 +11,6 @@ const {
   FLAG_CHANGE_PARTITION
 } = Constants
 const {
-  assertRevertErrMsg,
   concatHexData,
   formatCollateralPartition,
 } = Helpers
@@ -114,7 +114,7 @@ contract('FlexaCollateralManager', function ([
 
     describe('when the partition is not permitted', () => {
       it('reverts', async function () {
-        await assertRevertErrMsg(
+        await shouldFail.reverting(
           this.amp.tokensReceived(
             ZERO_BYTES4,
             DEFAULT_PARTITION,
@@ -125,8 +125,7 @@ contract('FlexaCollateralManager', function ([
             this.switchToPartitionA,
             ZERO_BYTE,
             { from: unknown }
-          ),
-          'Receipt unauthorized'
+          )
         )
       })
     })

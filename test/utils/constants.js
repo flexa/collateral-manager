@@ -18,20 +18,22 @@ export const FLAG_WITHDRAWAL_FALLBACK =
   '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
 export const FLAG_REFUND =
   '0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
-export const FLAG_CONSUMPTION =
+export const FLAG_DIRECT_TRANSFER =
   '0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'
 
 // Partitions
 export const DEFAULT_PARTITION = ZERO_BYTES32
 export const ALT_PARTITION_1 = toPartition(toHex('dope'))
+export const ALT_PARTITION_2 = toPartition(toHex('super dope'))
 export const SWITCH_TO_DEFAULT_PARTITION = concatHexData(
   FLAG_CHANGE_PARTITION,
   DEFAULT_PARTITION
 )
+export const PREFIX_COLLATERAL_POOL = '0xCCCCCCCC'
 
 // Events
-export const EVENT_CONSUMER_UPDATE = 'ConsumerUpdate'
-export const EVENT_CONSUMPTION = 'Consumption'
+export const EVENT_DIRECT_TRANSFERER_UPDATE = 'DirectTransfererUpdate'
+export const EVENT_DIRECT_TRANSFER = 'DirectTransfer'
 export const EVENT_FALLBACK_MECHANISM_DATE_RESET = 'FallbackMechanismDateReset'
 export const EVENT_FALLBACK_PUBLISHER_UPDATE = 'FallbackPublisherUpdate'
 export const EVENT_FALLBACK_ROOT_HASH_SET = 'FallbackRootHashSet'

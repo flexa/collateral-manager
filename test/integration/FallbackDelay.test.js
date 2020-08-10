@@ -1,7 +1,8 @@
 import { shouldFail } from 'openzeppelin-test-helpers'
-import { Constants } from './utils'
+import { Constants } from '../utils'
 
-const MockAmp = artifacts.require('MockAmp')
+const MockFXC = artifacts.require('MockFXC')
+const Amp = artifacts.require('Amp')
 const FlexaCollateralManager = artifacts.require('FlexaCollateralManager')
 const { EVENT_FALLBACK_WITHDRAWAL_DELAY_UPDATE } = Constants
 
@@ -9,12 +10,22 @@ const fallbackDelay = 100
 const oneWeekSeconds = 7 * 24 * 60 * 60
 
 contract('FlexaCollateralManager', function ([
+    fxcOwner,
+    ampOwner,
     owner,
     fallbackPublisher
 ]) {
-    describe('Fallback Delay', function () {
+    describe('Integration - Fallback Delay', function () {
         beforeEach(async function () {
-            this.amp = await MockAmp.deployed()
+            this.fxc = await MockFXC.new(
+                { from: fxcOwner }
+            )
+            this.amp = await Amp.new(
+                this.fxc.address,
+                '',
+                '',
+                { from: ampOwner }
+            )
             this.collateralManager = await FlexaCollateralManager.new(
                 this.amp.address,
                 { from: owner }

@@ -1,0 +1,3 @@
+[submodule "amp-token-contracts"]
+	path = amp-token-contracts
+	url = https://github.com/amptoken/amp-token-contracts.git

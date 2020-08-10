@@ -1,21 +1,21 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity 0.6.9;
+pragma solidity 0.6.10;
 
 import "openzeppelin-solidity/contracts/math/SafeMath.sol";
 
-import "./amp/IAmp.sol";
-import "./amp/IAmpTokensRecipient.sol";
-import "./amp/IAmpTokensSender.sol";
-
-import "./erc1820/ERC1820Client.sol";
-
+import "./IAmp.sol";
+import "./amp/Ownable.sol";
+import "./amp/erc1820/ERC1820Client.sol";
+import "./amp/extensions/IAmpTokensRecipient.sol";
+import "./amp/extensions/IAmpTokensSender.sol";
+import "./amp/partitions/lib/PartitionUtils.sol";
 
 /**
  * @title FlexaCollateralManager is an implementation of IAmpTokensSender and IAmpTokensRecipient
  * which serves as the Amp collateral manager for the Flexa Network.
  */
-contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC1820Client {
+contract FlexaCollateralManager is Ownable, IAmpTokensSender, IAmpTokensRecipient, ERC1820Client {
     /**
      * @dev AmpTokensSender interface label.
      */
@@ -30,7 +30,8 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
      * @dev Change Partition Flag used in transfer data parameters to signal which partition
      * will receive the tokens.
      */
-    bytes32 internal constant CHANGE_PARTITION_FLAG = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff;
+    bytes32
+        internal constant CHANGE_PARTITION_FLAG = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff;
 
     /**
      * @dev Required prefix for all registered partitions. Used to ensure the Collateral Pool
@@ -45,30 +46,34 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
     /**
      * @dev Flag used in operator data parameters to indicate the transfer is a withdrawal
      */
-    bytes32 internal constant WITHDRAWAL_FLAG = 0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;
+    bytes32
+        internal constant WITHDRAWAL_FLAG = 0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;
 
     /**
      * @dev Flag used in operator data parameters to indicate the transfer is a fallback
      * withdrawal
      */
-    bytes32 internal constant FALLBACK_WITHDRAWAL_FLAG = 0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;
+    bytes32
+        internal constant FALLBACK_WITHDRAWAL_FLAG = 0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;
 
     /**
      * @dev Flag used in operator data parameters to indicate the transfer is a supply refund
      */
-    bytes32 internal constant REFUND_FLAG = 0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc;
+    bytes32
+        internal constant REFUND_FLAG = 0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc;
 
     /**
-     * @dev Flag used in operator data parameters to indicate the transfer is a consumption
+     * @dev Flag used in operator data parameters to indicate the transfer is a direct transfer
      */
-    bytes32 internal constant CONSUMPTION_FLAG = 0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd;
+    bytes32
+        internal constant DIRECT_TRANSFER_FLAG = 0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd;
 
     /**********************************************************************************************
      * Configuration
      *********************************************************************************************/
 
     /**
-     * @notice Address of the Amp contract
+     * @notice Address of the Amp contract. Immutable.
      */
     address public amp;
 
@@ -80,16 +85,6 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
     /**********************************************************************************************
      * Roles
      *********************************************************************************************/
-
-    /**
-     * @notice Address authorized to manage other roles and perform all administrative functions
-     */
-    address public owner;
-
-    /**
-     * @notice Address used to hold the address of a new owner as part of a two-step transfer
-     */
-    address public authorizedNewOwner;
 
     /**
      * @notice Address authorized to publish withdrawal roots
@@ -107,9 +102,9 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
     address public withdrawalLimitPublisher;
 
     /**
-     * @notice Address authorized to consume tokens
+     * @notice Address authorized to directly transfer tokens
      */
-    address public consumer;
+    address public directTransferer;
 
     /**
      * @notice Address authorized to manage permitted partition
@@ -214,18 +209,6 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
     );
 
     /**
-     * @notice Indicates that a withdrawal authorization has been renounced
-     * @param supplier Address whose withdrawal authorizations were invalidated
-     * @param partition Partition for which the withdrawal authorizations were invalidated
-     * @param nonce Nonce of the latest withdrawal root at the time of renouncement
-     */
-    event RenounceWithdrawalAuthorization(
-        address indexed supplier,
-        bytes32 indexed partition,
-        uint256 indexed nonce
-    );
-
-    /**
      * @notice Indicates that a withdrawal was executed
      * @param supplier Address whose withdrawal authorization was executed
      * @param partition Partition from which the tokens were transferred
@@ -258,11 +241,13 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
      * @param supplier Token supplier
      * @param partition Parition from which the tokens should be released
      * @param amount Number of tokens requested to be released
+     * @param data Metadata provided by the requestor
      */
     event ReleaseRequest(
         address indexed supplier,
         bytes32 indexed partition,
-        uint256 indexed amount
+        uint256 indexed amount,
+        bytes data
     );
 
     /**
@@ -270,6 +255,7 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
      * @param supplier Address whose refund authorization was executed
      * @param partition Partition from which the tokens were transferred
      * @param amount Amount of tokens transferred
+     * @param nonce Nonce of the original supply
      */
     event SupplyRefund(
         address indexed supplier,
@@ -279,16 +265,24 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
     );
 
     /**********************************************************************************************
-     * Consumption Events
+     * Direct Transfer Events
      *********************************************************************************************/
 
     /**
-     * @notice Emitted when tokens are consumed
-     * @param operator Address that executed the consumption
-     * @param partition Partition from which the tokens were transferred
+     * @notice Emitted when tokens are directly transfered
+     * @param operator Address that executed the direct transfer
+     * @param from_partition Partition from which the tokens were transferred
+     * @param to_address Address to which the tokens were transferred
+     * @param to_partition Partition to which the tokens were transferred
      * @param value Amount of tokens transferred
      */
-    event Consumption(address indexed operator, bytes32 indexed partition, uint256 indexed value);
+    event DirectTransfer(
+        address operator,
+        bytes32 indexed from_partition,
+        address indexed to_address,
+        bytes32 indexed to_partition,
+        uint256 value
+    );
 
     /**********************************************************************************************
      * Admin Configuration Events
@@ -365,19 +359,6 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
      *********************************************************************************************/
 
     /**
-     * @notice Emitted when the owner authorizes ownership transfer to a new address
-     * @param authorizedAddress New owner address
-     */
-    event OwnershipTransferAuthorization(address indexed authorizedAddress);
-
-    /**
-     * @notice Emitted when the authorized address assumed ownership
-     * @param oldValue Old owner
-     * @param newValue New owner
-     */
-    event OwnerUpdate(address indexed oldValue, address indexed newValue);
-
-    /**
      * @notice Emitted when the Withdrawal Publisher is updated
      * @param oldValue Old publisher
      * @param newValue New publisher
@@ -399,11 +380,11 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
     event WithdrawalLimitPublisherUpdate(address indexed oldValue, address indexed newValue);
 
     /**
-     * @notice Emitted when the Consumer address is updated
-     * @param oldValue Old Consumer address
-     * @param newValue New Consumer address
+     * @notice Emitted when the DirectTransferer address is updated
+     * @param oldValue Old DirectTransferer address
+     * @param newValue New DirectTransferer address
      */
-    event ConsumerUpdate(address indexed oldValue, address indexed newValue);
+    event DirectTransfererUpdate(address indexed oldValue, address indexed newValue);
 
     /**
      * @notice Emitted when the Partition Manager address is updated
@@ -421,7 +402,6 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
      * @param _amp Address of the Amp token contract
      */
     constructor(address _amp) public {
-        owner = msg.sender;
         amp = _amp;
 
         ERC1820Client.setInterfaceImplementation(AMP_TOKENS_RECIPIENT, address(this));
@@ -453,20 +433,13 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
         bytes calldata _data,
         bytes calldata /* operatorData */
     ) external override view returns (bool) {
-        bytes32 _destinationPartition = _getDestinationPartition(_partition, _data);
+        if (msg.sender != amp || _to != address(this)) {
+            return false;
+        }
 
-        return _canReceive(_to, _destinationPartition);
-    }
+        bytes32 _destinationPartition = PartitionUtils._getDestinationPartition(_data, _partition);
 
-    /**
-     * @notice Validates where the supplied parameters are valid for a transfer of tokens to this
-     * contract
-     * @param _to The destination address of the tokens. Must be this.
-     * @param _destinationPartition Partition to which the tokens are to be transferred
-     * @return true if the tokens can be received, otherwise false
-     */
-    function _canReceive(address _to, bytes32 _destinationPartition) internal view returns (bool) {
-        return _to == address(this) && partitions[_destinationPartition];
+        return partitions[_destinationPartition];
     }
 
     /**
@@ -490,10 +463,11 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
         bytes calldata /* operatorData */
     ) external override {
         require(msg.sender == amp, "Invalid sender");
+        require(_to == address(this), "Invalid to address");
 
-        bytes32 _destinationPartition = _getDestinationPartition(_partition, _data);
+        bytes32 _destinationPartition = PartitionUtils._getDestinationPartition(_data, _partition);
 
-        require(_canReceive(_to, _destinationPartition), "Receipt unauthorized");
+        require(partitions[_destinationPartition], "Invalid destination partition");
 
         supplyNonce = SafeMath.add(supplyNonce, 1);
         nonceToSupply[supplyNonce].supplier = _operator;
@@ -544,8 +518,8 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
         if (flag == REFUND_FLAG) {
             return _validateRefund(_partition, _operator, _value, _operatorData);
         }
-        if (flag == CONSUMPTION_FLAG) {
-            return _validateConsumption(_operator, _value);
+        if (flag == DIRECT_TRANSFER_FLAG) {
+            return _validateDirectTransfer(_operator, _value);
         }
 
         return false;
@@ -557,7 +531,9 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
      * @param _partition Source partition of the tokens
      * @param _operator Address which triggered the transfer
      * @param _from The source address of the tokens. Must be this.
+     * @param _to The target address of the tokens.
      * @param _value Amount of tokens to be transferred
+     * @param _data Data attached to the transfer. Typically includes partition change information.
      * @param _operatorData Extra information attached by the operator. Must include the transfer
      * operation flag and additional authorization data custom for each transfer operation type.
      */
@@ -566,9 +542,9 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
         bytes32 _partition,
         address _operator,
         address _from,
-        address, /* to */
+        address _to,
         uint256 _value,
-        bytes calldata, /* data */
+        bytes calldata _data,
         bytes calldata _operatorData
     ) external override {
         require(msg.sender == amp, "Invalid sender");
@@ -582,8 +558,8 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
             _executeFallbackWithdrawal(_partition, _operator, _value, _operatorData);
         } else if (flag == REFUND_FLAG) {
             _executeRefund(_partition, _operator, _value, _operatorData);
-        } else if (flag == CONSUMPTION_FLAG) {
-            _executeConsumption(_partition, _operator, _value);
+        } else if (flag == DIRECT_TRANSFER_FLAG) {
+            _executeDirectTransfer(_partition, _operator, _to, _value, _data);
         } else {
             revert("invalid flag");
         }
@@ -739,7 +715,7 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
     ) internal view returns (bool) {
         return
             // Only owner, withdrawal publisher or supplier can invoke withdrawals
-            (_operator == owner || _operator == withdrawalPublisher || _operator == _supplier) &&
+            (_operator == owner() || _operator == withdrawalPublisher || _operator == _supplier) &&
             // Ensure maxAuthorizedAccountNonce has not been exceeded
             (addressToWithdrawalNonce[_partition][_supplier] <= _maxAuthorizedAccountNonce) &&
             // Ensure we are within the global withdrawal limit
@@ -748,30 +724,6 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
             (_withdrawalRootNonce > 0) &&
             // Ensure the withdrawal root is more recent than the maxAuthorizedAccountNonce
             (_withdrawalRootNonce > _maxAuthorizedAccountNonce);
-    }
-
-    /**
-     * @notice Indicates that this address and partition would not like its withdrawable funds to
-     * be available for withdrawal. This will prevent withdrawal for this address until the next
-     * withdrawal root is published.
-     * @dev The caller does not need to know or prove the details of the current withdrawal
-     * authorization in order to renounce it.
-     * @param _supplier The address whose account is authorized for withdrawal
-     * @param _partition Source partition of the tokens
-     */
-    function renounceWithdrawalAuthorization(address _supplier, bytes32 _partition) external {
-        require(
-            msg.sender == owner || msg.sender == withdrawalPublisher || msg.sender == _supplier,
-            "Invalid sender"
-        );
-        require(
-            addressToWithdrawalNonce[_partition][_supplier] < maxWithdrawalRootNonce,
-            "Authorization expired"
-        );
-
-        addressToWithdrawalNonce[_partition][_supplier] = maxWithdrawalRootNonce;
-
-        emit RenounceWithdrawalAuthorization(_supplier, _partition, maxWithdrawalRootNonce);
     }
 
     /**********************************************************************************************
@@ -921,7 +873,7 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
     ) internal view returns (bool) {
         return
             // Only owner or supplier can invoke the fallback withdrawal
-            (_operator == owner || _operator == _supplier) &&
+            (_operator == owner() || _operator == _supplier) &&
             // Ensure we have entered fallback mode
             (SafeMath.add(fallbackSetDate, fallbackWithdrawalDelaySeconds) <= block.timestamp) &&
             // Check that the maximum allowable withdrawal for the supplier has not been exceeded
@@ -1016,7 +968,7 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
             // Supply record exists
             (_supply.amount > 0) &&
             // Only owner or supplier can invoke the refund
-            (_operator == owner || _operator == _supply.supplier) &&
+            (_operator == owner() || _operator == _supply.supplier) &&
             // Requested partition matches the Supply record
             (_partition == _supply.partition) &&
             // Requested value matches the Supply record
@@ -1028,39 +980,49 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
     }
 
     /**********************************************************************************************
-     * Consumption
+     * Direct Transfers
      *********************************************************************************************/
 
     /**
-     * @notice Validates consumption data
+     * @notice Validates direct transfer data
      * @param _operator Address that is invoking the transfer
      * @param _value Number of tokens to be transferred
-     * @return true if the consumption data is valid, otherwise false
+     * @return true if the direct transfer data is valid, otherwise false
      */
-    function _validateConsumption(address _operator, uint256 _value) internal view returns (bool) {
+    function _validateDirectTransfer(address _operator, uint256 _value)
+        internal
+        view
+        returns (bool)
+    {
         return
-            // Only owner and consumer can invoke withdrawals
-            (_operator == owner || _operator == consumer) &&
+            // Only owner and directTransferer can invoke withdrawals
+            (_operator == owner() || _operator == directTransferer) &&
             // Ensure we are within the global withdrawal limit
             (_value <= withdrawalLimit);
     }
 
     /**
-     * @notice Validates the consumption data and updates state to reflect the transfer
-     * @param _partition Source partition of the consumption
+     * @notice Validates the direct transfer data and updates state to reflect the transfer
+     * @param _partition Source partition of the direct transfer
      * @param _operator Address that is invoking the transfer
+     * @param _to The target address of the tokens.
      * @param _value Number of tokens to be transferred
+     * @param _data Data attached to the transfer. Typically includes partition change information.
      */
-    function _executeConsumption(
+    function _executeDirectTransfer(
         bytes32 _partition,
         address _operator,
-        uint256 _value
+        address _to,
+        uint256 _value,
+        bytes memory _data
     ) internal {
-        require(_validateConsumption(_operator, _value), "Transfer unauthorized");
+        require(_validateDirectTransfer(_operator, _value), "Transfer unauthorized");
 
         withdrawalLimit = SafeMath.sub(withdrawalLimit, _value);
 
-        emit Consumption(_operator, _partition, _value);
+        bytes32 to_partition = PartitionUtils._getDestinationPartition(_data, _partition);
+
+        emit DirectTransfer(_operator, _partition, _to, to_partition, _value);
     }
 
     /**********************************************************************************************
@@ -1070,10 +1032,15 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
     /**
      * @notice Emits a release request event that can be used to trigger the release of tokens
      * @param _partition Parition from which the tokens should be released
-     * @param _amount  Number of tokens requested to be released
+     * @param _amount Number of tokens requested to be released
+     * @param _data Metadata to include with the release request
      */
-    function requestRelease(bytes32 _partition, uint256 _amount) external {
-        emit ReleaseRequest(msg.sender, _partition, _amount);
+    function requestRelease(
+        bytes32 _partition,
+        uint256 _amount,
+        bytes memory _data
+    ) external {
+        emit ReleaseRequest(msg.sender, _partition, _amount, _data);
     }
 
     /**********************************************************************************************
@@ -1085,10 +1052,10 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
      * @param _partition Parition to be permitted for incoming transfers
      */
     function addPartition(bytes32 _partition) external {
-        require(msg.sender == owner || msg.sender == partitionManager, "Invalid sender");
+        require(msg.sender == owner() || msg.sender == partitionManager, "Invalid sender");
         require(partitions[_partition] == false, "Partition already permitted");
 
-        (bytes4 prefix, address partitionOwner) = _splitPartition(_partition);
+        (bytes4 prefix, , address partitionOwner) = PartitionUtils._splitPartition(_partition);
 
         require(prefix == PARTITION_PREFIX, "Invalid partition prefix");
         require(partitionOwner == address(this), "Invalid partition owner");
@@ -1103,7 +1070,7 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
      * @param _partition Parition to be disallowed from incoming transfers
      */
     function removePartition(bytes32 _partition) external {
-        require(msg.sender == owner || msg.sender == partitionManager, "Invalid sender");
+        require(msg.sender == owner() || msg.sender == partitionManager, "Invalid sender");
         require(partitions[_partition], "Partition not permitted");
 
         delete partitions[_partition];
@@ -1120,7 +1087,7 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
      * @param _amount Limit delta
      */
     function modifyWithdrawalLimit(int256 _amount) external {
-        require(msg.sender == owner || msg.sender == withdrawalLimitPublisher, "Invalid sender");
+        require(msg.sender == owner() || msg.sender == withdrawalLimitPublisher, "Invalid sender");
         uint256 oldLimit = withdrawalLimit;
         if (_amount < 0) {
             uint256 unsignedAmount = uint256(-_amount);
@@ -1145,7 +1112,7 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
         uint256 _nonce,
         bytes32[] calldata _replacedRoots
     ) external {
-        require(msg.sender == owner || msg.sender == withdrawalPublisher, "Invalid sender");
+        require(msg.sender == owner() || msg.sender == withdrawalPublisher, "Invalid sender");
 
         require(_root != 0, "Invalid root");
         require(maxWithdrawalRootNonce + 1 == _nonce, "Nonce not current max plus one");
@@ -1166,7 +1133,7 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
      * @param _roots The root hashes to be removed from the active set
      */
     function removeWithdrawalRoots(bytes32[] calldata _roots) external {
-        require(msg.sender == owner || msg.sender == withdrawalPublisher, "Invalid sender");
+        require(msg.sender == owner() || msg.sender == withdrawalPublisher, "Invalid sender");
 
         for (uint256 i = 0; i < _roots.length; i++) {
             deleteWithdrawalRoot(_roots[i]);
@@ -1200,7 +1167,7 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
      * fallback withdrawal authorizations.
      */
     function setFallbackRoot(bytes32 _root, uint256 _maxSupplyNonce) external {
-        require(msg.sender == owner || msg.sender == fallbackPublisher, "Invalid sender");
+        require(msg.sender == owner() || msg.sender == fallbackPublisher, "Invalid sender");
         require(_root != 0, "Invalid root");
         require(
             SafeMath.add(fallbackSetDate, fallbackWithdrawalDelaySeconds) > block.timestamp,
@@ -1225,7 +1192,7 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
      * fallback mechanism so a new fallback root may be published.
      */
     function resetFallbackMechanismDate() external {
-        require(msg.sender == owner || msg.sender == fallbackPublisher, "Invalid sender");
+        require(msg.sender == owner() || msg.sender == fallbackPublisher, "Invalid sender");
         fallbackSetDate = block.timestamp;
 
         emit FallbackMechanismDateReset(fallbackSetDate);
@@ -1237,7 +1204,7 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
      * @param _newFallbackDelaySeconds The new delay period in seconds
      */
     function setFallbackWithdrawalDelay(uint256 _newFallbackDelaySeconds) external {
-        require(msg.sender == owner, "Invalid sender");
+        require(msg.sender == owner(), "Invalid sender");
         require(_newFallbackDelaySeconds != 0, "Invalid zero delay seconds");
         require(_newFallbackDelaySeconds < 10 * 365 days, "Invalid delay over 10 years");
 
@@ -1252,41 +1219,13 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
      *********************************************************************************************/
 
     /**
-     * @notice Authorizes the transfer of ownership from owner to the provided address.
-     * NOTE: No transfer will occur unless authorizedAddress calls assumeOwnership().
-     * This authorization may be removed by another call to this function authorizing the zero
-     * address.
-     * @param _authorizedAddress The address authorized to become the new owner
-     */
-    function authorizeOwnershipTransfer(address _authorizedAddress) external {
-        require(msg.sender == owner, "Invalid sender");
-
-        authorizedNewOwner = _authorizedAddress;
-
-        emit OwnershipTransferAuthorization(authorizedNewOwner);
-    }
-
-    /**
-     * @notice Transfers ownership of this contract to the authorizedNewOwner
-     * @dev Error invalid sender.
-     */
-    function assumeOwnership() external {
-        require(msg.sender == authorizedNewOwner, "Invalid sender");
-        address oldValue = owner;
-        owner = authorizedNewOwner;
-        authorizedNewOwner = address(0);
-
-        emit OwnerUpdate(oldValue, owner);
-    }
-
-    /**
      * @notice Updates the Withdrawal Publisher address, the only address other than the owner that
      * can publish / remove withdrawal Merkle tree roots.
      * @param _newWithdrawalPublisher The address of the new Withdrawal Publisher
      * @dev Error invalid sender.
      */
     function setWithdrawalPublisher(address _newWithdrawalPublisher) external {
-        require(msg.sender == owner, "Invalid sender");
+        require(msg.sender == owner(), "Invalid sender");
 
         address oldValue = withdrawalPublisher;
         withdrawalPublisher = _newWithdrawalPublisher;
@@ -1301,7 +1240,7 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
      * @dev Error invalid sender.
      */
     function setFallbackPublisher(address _newFallbackPublisher) external {
-        require(msg.sender == owner, "Invalid sender");
+        require(msg.sender == owner(), "Invalid sender");
 
         address oldValue = fallbackPublisher;
         fallbackPublisher = _newFallbackPublisher;
@@ -1316,7 +1255,7 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
      * @dev Error invalid sender.
      */
     function setWithdrawalLimitPublisher(address _newWithdrawalLimitPublisher) external {
-        require(msg.sender == owner, "Invalid sender");
+        require(msg.sender == owner(), "Invalid sender");
 
         address oldValue = withdrawalLimitPublisher;
         withdrawalLimitPublisher = _newWithdrawalLimitPublisher;
@@ -1325,17 +1264,17 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
     }
 
     /**
-     * @notice Updates the Consumer address, the only address other than the owner that can execute
-     * supply consumptions.
-     * @param _newConsumer The address of the new Consumer
+     * @notice Updates the DirectTransferer address, the only address other than the owner that
+     * can execute direct transfers
+     * @param _newDirectTransferer The address of the new DirectTransferer
      */
-    function setConsumer(address _newConsumer) external {
-        require(msg.sender == owner, "Invalid sender");
+    function setDirectTransferer(address _newDirectTransferer) external {
+        require(msg.sender == owner(), "Invalid sender");
 
-        address oldValue = consumer;
-        consumer = _newConsumer;
+        address oldValue = directTransferer;
+        directTransferer = _newDirectTransferer;
 
-        emit ConsumerUpdate(oldValue, consumer);
+        emit DirectTransfererUpdate(oldValue, directTransferer);
     }
 
     /**
@@ -1344,69 +1283,12 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
      * @param _newPartitionManager The address of the new PartitionManager
      */
     function setPartitionManager(address _newPartitionManager) external {
-        require(msg.sender == owner, "Invalid sender");
+        require(msg.sender == owner(), "Invalid sender");
 
         address oldValue = partitionManager;
         partitionManager = _newPartitionManager;
 
         emit PartitionManagerUpdate(oldValue, partitionManager);
-    }
-
-    /**********************************************************************************************
-     * Partition Decoder
-     *********************************************************************************************/
-
-    /**
-     * @notice Helper method to split the partition into the prefix, sub-partition and partition
-     * owner components.
-     * @param _partition The partition to be split into its subcomponents
-     * @return prefix, the 4-byte partition prefix
-     * @return partitionOwner, the 20-byte partition owner address
-     */
-    function _splitPartition(bytes32 _partition) internal pure returns (bytes4, address) {
-        bytes4 prefix = bytes4(_partition);
-        address paritionOwner = address(uint160(uint256(_partition)));
-
-        return (prefix, paritionOwner);
-    }
-
-    /**********************************************************************************************
-     * Data Decoders
-     *********************************************************************************************/
-
-    /**
-     * @notice Retrieve the destination partition from the 'data' field. A partition change is
-     * requested ONLY when 'data' starts with the flag:
-     *
-     *   0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
-     *
-     * When the flag is detected, the destination partition is extracted from the 32 bytes
-     * following the flag.
-     * @param _fromPartition Partition the tokens are transferred from.
-     * @param _data Information attached to the transfer. Will contain the destination partition
-     * if a change is requested.
-     * @return toPartition Destination partition. If the `_data` does not contain the flag and bytes32
-     * partition in the first 64 bytes, the method will return the provided _fromPartition.
-     */
-    function _getDestinationPartition(bytes32 _fromPartition, bytes memory _data)
-        internal
-        pure
-        returns (bytes32 toPartition)
-    {
-        toPartition = _fromPartition;
-        if (_data.length < 64) {
-            return toPartition;
-        }
-
-        bytes32 flag;
-        assembly {
-            flag := mload(add(_data, 32))
-        }
-        if (flag == CHANGE_PARTITION_FLAG) {
-            assembly {
-                toPartition := mload(add(_data, 64))
-            }
-        }
     }
 
     /**********************************************************************************************
@@ -1419,11 +1301,7 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
      * @return flag, the transfer operation type
      */
     function _decodeOperatorDataFlag(bytes memory _operatorData) internal pure returns (bytes32) {
-        bytes32 flag;
-        assembly {
-            flag := mload(add(_operatorData, 32))
-        }
-        return (flag);
+        return abi.decode(_operatorData, (bytes32));
     }
 
     /**
@@ -1445,29 +1323,10 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
             bytes32[] memory
         )
     {
-        bytes20 supplierB;
-        assembly {
-            supplierB := mload(add(_operatorData, 64))
-        }
-        address supplier = address(supplierB);
-
-        bytes32 nonceB;
-        assembly {
-            nonceB := mload(add(_operatorData, 84))
-        }
-        uint256 nonce = uint256(nonceB);
-
-        uint256 proofNb = (_operatorData.length - 84) / 32;
-        bytes32[] memory proof = new bytes32[](proofNb);
-        uint256 index = 0;
-        for (uint256 i = 116; i <= _operatorData.length; i = i + 32) {
-            bytes32 temp;
-            assembly {
-                temp := mload(add(_operatorData, i))
-            }
-            proof[index] = temp;
-            index++;
-        }
+        (, address supplier, uint256 nonce, bytes32[] memory proof) = abi.decode(
+            _operatorData,
+            (bytes32, address, uint256, bytes32[])
+        );
 
         return (supplier, nonce, proof);
     }
@@ -1478,12 +1337,9 @@ contract FlexaCollateralManager is IAmpTokensSender, IAmpTokensRecipient, ERC182
      * @return nonce, the nonce of the supply to be refunded
      */
     function _decodeRefundOperatorData(bytes memory _operatorData) internal pure returns (uint256) {
-        bytes32 nonceB;
-        assembly {
-            nonceB := mload(add(_operatorData, 64))
-        }
+        (, uint256 nonce) = abi.decode(_operatorData, (bytes32, uint256));
 
-        return uint256(nonceB);
+        return nonce;
     }
 
     /**********************************************************************************************

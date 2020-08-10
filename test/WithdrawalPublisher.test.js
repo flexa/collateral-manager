@@ -1,9 +1,9 @@
-import { Constants, Helpers } from './utils'
+import { shouldFail } from 'openzeppelin-test-helpers'
+import { Constants } from './utils'
 
 const MockAmp = artifacts.require('MockAmp')
 const FlexaCollateralManager = artifacts.require('FlexaCollateralManager')
 const { ZERO_ADDRESS, EVENT_WITHDRAWAL_PUBLISHER_UPDATE } = Constants
-const { assertRevertErrMsg } = Helpers
 
 contract('FlexaCollateralManager', function ([
   owner,
@@ -51,12 +51,11 @@ contract('FlexaCollateralManager', function ([
 
     describe('when non-owner sets the withdrawal publisher', () => {
       it('reverts', async function () {
-        await assertRevertErrMsg(
+        await shouldFail.reverting(
           this.collateralManager.setWithdrawalPublisher(
             unknown,
             { from: unknown }
-          ),
-          'Invalid sender'
+          )
         )
       })
     })

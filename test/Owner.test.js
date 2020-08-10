@@ -1,9 +1,9 @@
-import { Constants, Helpers } from './utils'
+import { shouldFail } from 'openzeppelin-test-helpers'
+import { Constants } from './utils'
 
 const MockAmp = artifacts.require('MockAmp')
 const FlexaCollateralManager = artifacts.require('FlexaCollateralManager')
 const { ZERO_ADDRESS, EVENT_OWNERSHIP_TRANSFER_AUTHORIZATION, EVENT_OWNER_UPDATE } = Constants
-const { assertRevertErrMsg } = Helpers
 
 contract('FlexaCollateralManager', function ([
     owner,
@@ -84,11 +84,10 @@ contract('FlexaCollateralManager', function ([
 
             describe('when unauthorized caller assumes ownership', () => {
                 it('reverts', async function () {
-                    await assertRevertErrMsg(
+                    await shouldFail.reverting(
                         this.collateralManager.assumeOwnership(
                             { from: unknown }
-                        ),
-                        'Invalid sender'
+                        )
                     )
                 })
             })
@@ -96,12 +95,11 @@ contract('FlexaCollateralManager', function ([
 
         describe('when non-owner authorizes ownership transfer', () => {
             it('reverts', async function () {
-                await assertRevertErrMsg(
+                await shouldFail.reverting(
                     this.collateralManager.authorizeOwnershipTransfer(
                         newOwner,
                         { from: unknown }
-                    ),
-                    'Invalid sender'
+                    )
                 )
             })
         })

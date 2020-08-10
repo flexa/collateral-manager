@@ -1,3 +1,4 @@
+import { shouldFail } from 'openzeppelin-test-helpers'
 import { Constants, Helpers } from './utils'
 
 const MockAmp = artifacts.require('MockAmp')
@@ -14,7 +15,6 @@ const {
     EVENT_SUPPLY_REFUND
 } = Constants
 const {
-    assertRevertErrMsg,
     concatHexData,
     formatCollateralPartition,
     generateRefundOperatorData,
@@ -80,7 +80,7 @@ contract('FlexaCollateralManager', function ([
             describe('when the fallback period is inactive', () => {
                 describe('when the supplier reattempts refund', () => {
                     it('reverts', async function () {
-                        await assertRevertErrMsg(
+                        await shouldFail.reverting(
                             this.amp.tokensToTransfer(
                                 ZERO_BYTES4, // _functionSig
                                 this.partitionA, // _partition
@@ -91,8 +91,7 @@ contract('FlexaCollateralManager', function ([
                                 SWITCH_TO_DEFAULT_PARTITION, // data
                                 this.operatorData, // _operatorData
                                 { from: supplier }
-                            ),
-                            'Transfer unauthorized'
+                            )
                         )
                     })
                 })
@@ -146,7 +145,7 @@ contract('FlexaCollateralManager', function ([
 
                     describe('when the supplier reattempts refund', () => {
                         it('reverts', async function () {
-                            await assertRevertErrMsg(
+                            await shouldFail.reverting(
                                 this.amp.tokensToTransfer(
                                     ZERO_BYTES4, // _functionSig
                                     this.partitionA, // _partition
@@ -157,8 +156,7 @@ contract('FlexaCollateralManager', function ([
                                     SWITCH_TO_DEFAULT_PARTITION, // data
                                     this.operatorData, // _operatorData
                                     { from: supplier }
-                                ),
-                                'Transfer unauthorized'
+                                )
                             )
                         })
                     })
@@ -182,7 +180,7 @@ contract('FlexaCollateralManager', function ([
 
                 describe('when the fallback publisher executes the refund', () => {
                     it('reverts', async function () {
-                        await assertRevertErrMsg(
+                        await shouldFail.reverting(
                             this.amp.tokensToTransfer(
                                 ZERO_BYTES4, // _functionSig
                                 this.partitionA, // _partition
@@ -193,15 +191,14 @@ contract('FlexaCollateralManager', function ([
                                 SWITCH_TO_DEFAULT_PARTITION, // data
                                 this.operatorData, // _operatorData
                                 { from: fallbackPublisher }
-                            ),
-                            'Transfer unauthorized'
+                            )
                         )
                     })
                 })
 
                 describe('when an unauthorized user executes the refund', () => {
                     it('reverts', async function () {
-                        await assertRevertErrMsg(
+                        await shouldFail.reverting(
                             this.amp.tokensToTransfer(
                                 ZERO_BYTES4, // _functionSig
                                 this.partitionA, // _partition
@@ -212,8 +209,7 @@ contract('FlexaCollateralManager', function ([
                                 SWITCH_TO_DEFAULT_PARTITION, // data
                                 this.operatorData, // _operatorData
                                 { from: unknown }
-                            ),
-                            'Transfer unauthorized'
+                            )
                         )
                     })
                 })
@@ -227,7 +223,7 @@ contract('FlexaCollateralManager', function ([
                     })
 
                     it('reverts', async function () {
-                        await assertRevertErrMsg(
+                        await shouldFail.reverting(
                             this.amp.tokensToTransfer(
                                 ZERO_BYTES4, // _functionSig
                                 this.partitionA, // _partition
@@ -238,15 +234,14 @@ contract('FlexaCollateralManager', function ([
                                 SWITCH_TO_DEFAULT_PARTITION, // data
                                 this.operatorData, // _operatorData
                                 { from: supplier }
-                            ),
-                            'Transfer unauthorized'
+                            )
                         )
                     })
                 })
 
                 describe('when the supplier provides an incorrect value', () => {
                     it('reverts', async function () {
-                        await assertRevertErrMsg(
+                        await shouldFail.reverting(
                             this.amp.tokensToTransfer(
                                 ZERO_BYTES4, // _functionSig
                                 this.partitionA, // _partition
@@ -257,15 +252,14 @@ contract('FlexaCollateralManager', function ([
                                 SWITCH_TO_DEFAULT_PARTITION, // data
                                 this.operatorData, // _operatorData
                                 { from: supplier }
-                            ),
-                            'Transfer unauthorized'
+                            )
                         )
                     })
                 })
 
                 describe('when the supplier provides an incorrect partition', () => {
                     it('reverts', async function () {
-                        await assertRevertErrMsg(
+                        await shouldFail.reverting(
                             this.amp.tokensToTransfer(
                                 ZERO_BYTES4, // _functionSig
                                 DEFAULT_PARTITION, // _partition
@@ -276,8 +270,7 @@ contract('FlexaCollateralManager', function ([
                                 SWITCH_TO_DEFAULT_PARTITION, // data
                                 this.operatorData, // _operatorData
                                 { from: supplier }
-                            ),
-                            'Transfer unauthorized'
+                            )
                         )
                     })
                 })

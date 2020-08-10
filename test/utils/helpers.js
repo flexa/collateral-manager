@@ -85,20 +85,14 @@ export const generateLeaves = (dataList) => {
 }
 
 export const generateOperatorData = (flag, fromAddress, nonce, merkleProof) => {
-  let operatorData = ''
-  if (typeof flag !== 'undefined' && flag !== null) {
-    operatorData += flag
+  if (typeof fromAddress !== 'undefined') {
+    return web3.eth.abi.encodeParameters(
+      ['bytes32', 'address', 'uint256', 'bytes32[]'],
+      [flag, fromAddress, nonce, merkleProof],
+    );
   }
-  if (typeof fromAddress !== 'undefined' && fromAddress !== null) {
-    operatorData += fromAddress.replace('0x', '')
-  }
-  if (typeof nonce !== 'undefined' && nonce !== null) {
-    operatorData += convertNonceToBytes32(nonce)
-  }
-  if (typeof merkleProof !== 'undefined' && merkleProof !== null) {
-    operatorData += merkleProof.join('').replace(/0x/g, '')
-  }
-  return operatorData
+
+  return flag;
 }
 
 export const calculateFallbackHash = (to, partition, value) => {
@@ -126,20 +120,10 @@ export const generateFallbackLeaves = (dataList) => {
 }
 
 export const generateFallbackOperatorData = (flag, fromAddress, maxCumulativeAmount, merkleProof) => {
-  let operatorData = ''
-  if (typeof flag !== 'undefined' && flag !== null) {
-    operatorData += flag
-  }
-  if (typeof fromAddress !== 'undefined' && fromAddress !== null) {
-    operatorData += fromAddress.replace('0x', '')
-  }
-  if (typeof maxCumulativeAmount !== 'undefined' && maxCumulativeAmount !== null) {
-    operatorData += convertNonceToBytes32(maxCumulativeAmount)
-  }
-  if (typeof merkleProof !== 'undefined' && merkleProof !== null) {
-    operatorData += merkleProof.join('').replace(/0x/g, '')
-  }
-  return operatorData
+  return web3.eth.abi.encodeParameters(
+    ['bytes32', 'address', 'uint256', 'bytes32[]'],
+    [flag, fromAddress, maxCumulativeAmount, merkleProof],
+  );
 }
 
 export const generateRefundOperatorData = (flag, nonce) => {
